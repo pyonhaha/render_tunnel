@@ -8,6 +8,7 @@ import threading
 import base64
 import hashlib
 import os
+import sys
 sys.stdout.reconfigure(line_buffering=True)
 import struct
 from http.server import HTTPServer, BaseHTTPRequestHandler
