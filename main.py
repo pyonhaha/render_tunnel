@@ -8,10 +8,10 @@ import threading
 import base64
 import hashlib
 import os
-import sys
-sys.stdout.reconfigure(line_buffering=True)
 import struct
-from http.server import HTTPServer, BaseHTTPRequestHandler
+import sys
+
+sys.stdout.reconfigure(line_buffering=True)
 
 PORT = int(os.environ.get("PORT", 10000))
 BUFFER_SIZE = 65536
@@ -75,10 +75,12 @@ def create_ws_frame(payload, opcode=0x02):
 
 def forward_ws_to_tcp(ws_socket, tcp_socket):
     buffer = b""
+    total = 0
     try:
         while True:
             data = ws_socket.recv(BUFFER_SIZE)
             if not data:
+                print(f"      [ws→tcp] closed, {total} bytes", flush=True)
                 break
             buffer += data
             while True:
@@ -87,23 +89,28 @@ def forward_ws_to_tcp(ws_socket, tcp_socket):
                     break
                 buffer = buffer[consumed:]
                 if opcode == 0x08:
+                    print(f"      [ws→tcp] close frame, {total} bytes", flush=True)
                     return
                 elif opcode in (0x01, 0x02):
                     tcp_socket.sendall(payload)
-    except:
-        pass
+                    total += len(payload)
+    except Exception as e:
+        print(f"      [ws→tcp] error: {e}, {total} bytes", flush=True)
 
 
 def forward_tcp_to_ws(tcp_socket, ws_socket):
+    total = 0
     try:
         while True:
             data = tcp_socket.recv(BUFFER_SIZE)
             if not data:
+                print(f"      [tcp→ws] closed, {total} bytes", flush=True)
                 break
             frame = create_ws_frame(data)
             ws_socket.sendall(frame)
-    except:
-        pass
+            total += len(data)
+    except Exception as e:
+        print(f"      [tcp→ws] error: {e}, {total} bytes", flush=True)
 
 
 def handle_websocket(client_socket, path, headers):
@@ -114,14 +121,14 @@ def handle_websocket(client_socket, path, headers):
             return
         host = parts[1]
         port = int(parts[2])
-        print(f"[>] Tunnel to {host}:{port}")
-
+        print(f"[>] Tunnel to {host}:{port}", flush=True)
+        
         remote_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         remote_socket.settimeout(30)
         remote_socket.connect((host, port))
-        print(f"[✓] Connected to {host}:{port}")
-
-        ws_key = headers.get("sec-websocket-key", "") 
+        print(f"[✓] Connected to {host}:{port}", flush=True)
+        
+        ws_key = headers.get("sec-websocket-key", "")
         accept_key = compute_accept_key(ws_key)
         response = (
             "HTTP/1.1 101 Switching Protocols\r\n"
@@ -131,10 +138,10 @@ def handle_websocket(client_socket, path, headers):
             "\r\n"
         )
         client_socket.send(response.encode())
-
+        
         client_socket.settimeout(None)
         remote_socket.settimeout(None)
-
+        
         t1 = threading.Thread(target=forward_ws_to_tcp, args=(client_socket, remote_socket), daemon=True)
         t2 = threading.Thread(target=forward_tcp_to_ws, args=(remote_socket, client_socket), daemon=True)
         t1.start()
@@ -142,7 +149,7 @@ def handle_websocket(client_socket, path, headers):
         t1.join()
         t2.join()
     except Exception as e:
-        print(f"[!] Error: {e}")
+        print(f"[!] Error: {e}", flush=True)
     finally:
         try:
             client_socket.close()
@@ -156,7 +163,7 @@ def handle_websocket(client_socket, path, headers):
 
 
 def handle_client(client_socket, client_addr):
-    print(f"[+] Connection from {client_addr[0]}")
+    print(f"[+] Connection from {client_addr[0]}", flush=True)
     try:
         client_socket.settimeout(60)
         request = b""
@@ -165,23 +172,26 @@ def handle_client(client_socket, client_addr):
             if not chunk:
                 return
             request += chunk
-
+        
         lines = request.decode().split("\r\n")
         first_line = lines[0]
-        method, path, _ = first_line.split()
-
+        parts = first_line.split()
+        if len(parts) < 2:
+            return
+        method, path = parts[0], parts[1]
+        
         headers = {}
         for line in lines[1:]:
             if ": " in line:
                 key, value = line.split(": ", 1)
                 headers[key.lower()] = value
-
+        
         if path == "/health":
             response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nOK"
             client_socket.send(response.encode())
             client_socket.close()
             return
-
+        
         if headers.get("upgrade", "").lower() == "websocket":
             handle_websocket(client_socket, path, headers)
         else:
@@ -189,7 +199,7 @@ def handle_client(client_socket, client_addr):
             client_socket.send(response.encode())
             client_socket.close()
     except Exception as e:
-        print(f"[!] Error: {e}")
+        print(f"[!] Error: {e}", flush=True)
         try:
             client_socket.close()
         except:
@@ -201,9 +211,9 @@ def main():
     server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server.bind(('0.0.0.0', PORT))
     server.listen(100)
-
-    print(f"�🚀 WebSocket Tunnel Server running on port {PORT}")
-
+    
+    print(f"🚀 WebSocket Tunnel Server running on port {PORT}", flush=True)
+    
     while True:
         client, addr = server.accept()
         t = threading.Thread(target=handle_client, args=(client, addr), daemon=True)
